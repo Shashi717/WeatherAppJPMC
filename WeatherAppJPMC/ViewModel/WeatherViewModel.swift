@@ -5,6 +5,7 @@
 //  Created by Shashi Liyanage on 8/24/23.
 //
 
+import CoreLocation
 import Foundation
 import UIKit
 
@@ -12,11 +13,12 @@ protocol WeatherViewModelDelegate: AnyObject {
   func didUpdateViewModel(error: Error?)
 }
 
-class WeatherViewModel {
+class WeatherViewModel: NSObject {
 
   private static let lastSearchedLocationKey = "lastSearchedLocation"
-  private let apiService = APIService()
-  private let imageCache = NSCache<NSString,UIImage>()
+  private let apiService: APIService
+  private let locationManager: CLLocationManager
+  private let imageCache: NSCache<NSString,UIImage>
   private var weatherInformation: WeatherInformation?
 
   weak var delegate: WeatherViewModelDelegate?
@@ -73,8 +75,13 @@ class WeatherViewModel {
 
   var icon: UIImage?
 
-  init(weatherInformation: WeatherInformation? = nil) {
+  init(apiService: APIService, locationManger: CLLocationManager, imageCache: NSCache<NSString,UIImage>, weatherInformation: WeatherInformation? = nil) {
+    self.apiService = apiService
+    self.locationManager = locationManger
+    self.imageCache = imageCache
     self.weatherInformation = weatherInformation
+    super.init()
+    locationManager.delegate = self
   }
 
   func fetchIcon() {
@@ -105,7 +112,21 @@ class WeatherViewModel {
     }
   }
 
+  func fetchWeatherInfo() {
+    // fetch current location weather if we have the location authorization
+    if locationManager.authorizationStatus == .authorizedWhenInUse,
+       let coordinate = locationManager.location?.coordinate {
+      let geocode = Geocode(lat: coordinate.latitude, lon: coordinate.longitude)
+      fetchWeatherInfoWithGeocode(geocode)
+    } else {
+      // if not, request authorization and fetch default weather info
+      locationManager.requestWhenInUseAuthorization()
+      fetchWeatherInfoWithGeocode()
+    }
+  }
+
   func fetchWeatherInfo(_ locationName: String) {
+    // fetches location info with a query of location name
     guard let url = APIEndpoints.geocodeAPIEndpoint(locationName) else {
       return
     }
@@ -116,19 +137,19 @@ class WeatherViewModel {
         if let data = try? JSONEncoder().encode(geocode) {
           UserDefaults.standard.set(data, forKey: WeatherViewModel.lastSearchedLocationKey)
         }
-        self?.fetchWeatherInfo(geocode)
+        self?.fetchWeatherInfoWithGeocode(geocode)
       case .failure(_):
         // if fail to fetch from location name then fetch weather info
         // from last searched location
         if let data = UserDefaults.standard.data(forKey: WeatherViewModel.lastSearchedLocationKey),
            let geocode = try? JSONDecoder().decode(Geocode.self, from: data) {
-          self?.fetchWeatherInfo(geocode)
+          self?.fetchWeatherInfoWithGeocode(geocode)
         }
       }
     }
   }
 
-  func fetchWeatherInfo(_ geocode: Geocode = Geocode(lat: 40.78, lon: -73.97)) {
+  private func fetchWeatherInfoWithGeocode(_ geocode: Geocode = Geocode(lat: 40.78, lon: -73.97)) {
     // default location is set to Manhattan (for the first time weather info display)
     guard let url = APIEndpoints.weatherAPIEndpoint(String(geocode.lat), String(geocode.lon)) else {
       return
@@ -144,5 +165,16 @@ class WeatherViewModel {
         self?.delegate?.didUpdateViewModel(error: error)
       }
     }
+  }
+}
+
+extension WeatherViewModel: CLLocationManagerDelegate {
+
+  func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
+    guard status == .authorizedWhenInUse,
+          let coordinate = manager.location?.coordinate else { return }
+    let geocode = Geocode(lat: coordinate.latitude, lon: coordinate.longitude)
+    // fetch weather if the location authorization changes
+    fetchWeatherInfoWithGeocode(geocode)
   }
 }

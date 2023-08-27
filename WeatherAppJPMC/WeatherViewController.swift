@@ -14,46 +14,36 @@ class WeatherViewController: UIViewController {
   @IBOutlet weak var searchBar: UISearchBar!
   @IBOutlet weak var weatherView: WeatherView!
 
+  private let apiService = APIService()
   private let locationManager = CLLocationManager()
-  private let weatherViewModel = WeatherViewModel()
+  private let imageCache = NSCache<NSString,UIImage>()
+  private var weatherViewModel: WeatherViewModel?
+  
   private let weatherViewTapGestureRecognizer = UITapGestureRecognizer()
 
   override func viewDidLoad() {
     super.viewDidLoad()
 
+    weatherViewModel = WeatherViewModel(apiService: apiService, locationManger: locationManager, imageCache: imageCache)
+    weatherViewModel?.delegate = self
+    weatherViewModel?.fetchWeatherInfo()
+
     weatherViewTapGestureRecognizer.addTarget(self, action: #selector(didTapWeatherView))
     weatherView.addGestureRecognizer(weatherViewTapGestureRecognizer)
 
     searchBar.delegate = self
-    locationManager.delegate = self
-    weatherViewModel.delegate = self
-
-    fetchWeatherInfo()
   }
 
   @IBAction func didTapRefreshButton(_ sender: Any) {
     // in case there is a network failure tapping refresh will refetch the weather info
     searchBar.text = nil
-    fetchWeatherInfo()
+    weatherViewModel?.fetchWeatherInfo()
   }
 
   @objc func didTapWeatherView() {
     // if we tap out of the search bar (weather view) then we call end editing
     // to dismiss keyboard
     searchBar.endEditing(true)
-  }
-
-  private func fetchWeatherInfo() {
-    // fetch current location weather if we have the location authorization
-    if locationManager.authorizationStatus == .authorizedWhenInUse,
-       let coordinate = locationManager.location?.coordinate {
-      let geocode = Geocode(lat: coordinate.latitude, lon: coordinate.longitude)
-      weatherViewModel.fetchWeatherInfo(geocode)
-    } else {
-      // if not, request authorization and fetch default weather info
-      locationManager.requestWhenInUseAuthorization()
-      weatherViewModel.fetchWeatherInfo()
-    }
   }
 }
 
@@ -64,6 +54,9 @@ extension WeatherViewController: WeatherViewModelDelegate {
       displayAlert(title: "Something went wrong", message: error.localizedDescription)
     }
     // update the view regardless of an error present
+    guard let weatherViewModel = weatherViewModel else {
+      return
+    }
     weatherView.configure(weatherViewModel: weatherViewModel)
   }
 
@@ -79,17 +72,6 @@ extension WeatherViewController: WeatherViewModelDelegate {
   }
 }
 
-extension WeatherViewController: CLLocationManagerDelegate {
-
-  func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
-    guard status == .authorizedWhenInUse,
-          let coordinate = manager.location?.coordinate else { return }
-    let geocode = Geocode(lat: coordinate.latitude, lon: coordinate.longitude)
-    // fetch weather if the location authorization changes
-    weatherViewModel.fetchWeatherInfo(geocode)
-  }
-}
-
 extension WeatherViewController: UISearchBarDelegate {
 
   func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
@@ -97,6 +79,6 @@ extension WeatherViewController: UISearchBarDelegate {
     searchBar.endEditing(true)
     guard let query = searchBar.searchTextField.text else { return }
     // fetch weather if there's a search text
-    weatherViewModel.fetchWeatherInfo(query)
+    weatherViewModel?.fetchWeatherInfo(query)
   }
 }
